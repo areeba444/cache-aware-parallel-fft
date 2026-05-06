@@ -222,11 +222,23 @@ void del(char* s, cpx* a, cpx* b, cpx* c, int* ans) {
 // ---------------------------------------------------------------------------
 int main() {
     clock_t beg = clock();
-    freopen("fft.in", "r", stdin);
-    FILE* out = fopen("fft_avx.out", "w");
+    if (!freopen("tests/fft.in", "r", stdin)) {
+        fprintf(stderr, "Failed to open input file\n");
+        return 1;
+    }
 
+    FILE* out = fopen("output/fft_avx.out", "w");
+
+    if (!out) {
+        fprintf(stderr, "Failed to open output file\n");
+        return 1;
+    }
     int n;
-    scanf("%d", &n);
+    if (scanf("%d", &n) != 1) {
+        fprintf(stderr, "Failed to read n\n");
+        return 1;
+    }
+
 
     int t;
     char* s;
@@ -235,8 +247,16 @@ int main() {
 
     init(n, t, s, a, b, c, ans);
 
-    scanf("%s", s); for (int i = 0; i < n; i++) a[i] = s[n-i-1] - '0';
-    scanf("%s", s); for (int i = 0; i < n; i++) b[i] = s[n-i-1] - '0';
+    if (scanf("%s", s) != 1) {
+        fprintf(stderr, "Failed to read first number\n");
+        return 1;
+    }
+    for (int i = 0; i < n; i++) a[i] = s[n-i-1] - '0';
+    if (scanf("%s", s) != 1) {
+        fprintf(stderr, "Failed to read second number\n");
+        return 1;
+    }
+    for (int i = 0; i < n; i++) b[i] = s[n-i-1] - '0';
 
     FFT_AVX(a,  1, t);
     FFT_AVX(b,  1, t);
