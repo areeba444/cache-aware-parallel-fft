@@ -1,0 +1,14 @@
+Version,Threads,BlockSize,Time_ms
+serial,1,N/A,
+omp,1,N/A,0.145000
+omp,2,N/A,0.209000
+omp,4,N/A,0.972000
+omp,8,N/A,3.516000
+tiled,1,16,0.141000
+tiled,2,16,0.743000
+tiled,4,16,0.270000
+tiled,8,16,5.733000
+avx,1,16,0.173000
+avx,2,16,0.903000
+avx,4,16,0.662000
+avx,8,16,5.991000
