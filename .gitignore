@@ -1,2 +1,5 @@
 *_exec
 *.out
+bin/
+output/
+*.o
