@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
 #include <ctime>
 using namespace std;
 typedef complex<double> cpx;
@@ -47,11 +48,20 @@ void del(){
     free(s);free(a);free(b);
     free(c);free(ans);free(pos);
 }
-struct timespec time1 = {0, 0};
-struct timespec time2 = {0, 0};
+
+static void print_metrics(const char* config_name, int transform_size,
+                          double elapsed_seconds) {
+    const double log_terms = log2((double)transform_size);
+    const double flops = 15.0 * transform_size * log_terms + 6.0 * transform_size;
+    const double bytes = 6.0 * transform_size * sizeof(cpx);
+    const double gflops = flops / elapsed_seconds / 1e9;
+    const double ai = flops / bytes;
+    printf("%s,%d,%.6f,%.6f,%.6f\n",
+           config_name, transform_size, elapsed_seconds, gflops, ai);
+}
+
 int main()
 {
-	clock_t beg=clock();
     if (!freopen("tests/fft.in", "r", stdin)) {
         fprintf(stderr, "Failed to open input file\n");
         return 1;
@@ -83,6 +93,12 @@ int main()
     }
     for(int i=0;i<n;i++) b[i]=s[n-i-1]-'0';
     for(int i=0;i<t;i++) pos[i]=(pos[i>>1]>>1)|((i&1)<<(n0-1));
+
+    const int transform_size = t;
+    struct timespec start_time;
+    struct timespec end_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+
     FFT(a,1),FFT(b,1);
     for(int i=0;i<t;i++) c[i]=a[i]*b[i];
     FFT(c,-1);
@@ -90,8 +106,12 @@ int main()
     for(int i=0;i<t;i++) ans[i+1]+=ans[i]/10,ans[i]%=10;
     while(!ans[t]) t--;
     for(int i=t;i>=0;i--) fprintf(out,"%d",ans[i]);
+
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
     del();
-    clock_t end=clock();
-    printf("%lf\t", (double)(end-beg)/CLOCKS_PER_SEC*1000.0);
+
+    const double elapsed_seconds = (end_time.tv_sec - start_time.tv_sec)
+        + (end_time.tv_nsec - start_time.tv_nsec) * 1e-9;
+    print_metrics("serial", transform_size, elapsed_seconds);
     return 0;
 }

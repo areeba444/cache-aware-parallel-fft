@@ -168,3 +168,55 @@ This project targets three gaps left open by existing parallel FFT literature:
 3. Lu et al. (2023). *GFFT: A Task Graph Based FFT Optimization Framework*. ICPP 2023.
 4. Franchetti et al. (2003). *Efficient Utilization of SIMD Extensions*. Euro-Par 2003.
 5. Gong et al. (2022). *Interval Arithmetic-Based FFT for Large Integer Multiplication*. IEEE HPEC 2022.
+
+## Folder Structure
+
+```
+cache-aware-parallel-fft/
+├── Makefile
+├── README.md
+├── run_benchmarks.sh
+├── benchmarks/
+│   └── benchmark_results.csv
+├── bin/
+│   ├── serial_fft
+│   ├── fft_omp
+│   ├── fft_omp_tiled
+│   └── fft_avx
+├── docs/
+│   └── supplementary notes and write-up material
+├── include/
+│   └── shared headers or future interfaces
+├── output/
+│   ├── sfft.out
+│   ├── fft_omp.out
+│   ├── fft_omp_tiled.out
+│   └── fft_avx.out
+├── roofline/
+│   ├── Config/
+│   │   └── my_laptop
+│   ├── ert/
+│   │   └── Empirical_Roofline_Tool-1.1.0/
+│   └── results/
+│       ├── roofline_chart.pdf
+│       ├── roofline_chart.png
+│       └── perf / ERT output files
+├── scripts/
+│   └── plot_roofline.py
+├── src/
+│   ├── core/
+│   │   └── serial_fft.cpp
+│   ├── parallel/
+│   │   ├── fft_omp.cpp
+│   │   └── fft_omp_tiled.cpp
+│   └── simd/
+│       └── fft_avx.cpp
+└── tests/
+  ├── fft.in
+  ├── generate_tests.py
+  ├── small_tests/
+  ├── medium_tests/
+  └── large_tests/
+```
+
+The repository is organized around four FFT implementations in `src/`, one benchmark runner at the top level, and a separate `roofline/` area for ERT configuration and roofline plots.

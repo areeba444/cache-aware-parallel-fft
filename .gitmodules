@@ -1,0 +1,3 @@
+[submodule "roofline/ert"]
+	path = roofline/ert
+	url = https://bitbucket.org/berkeleylab/cs-roofline-toolkit.git

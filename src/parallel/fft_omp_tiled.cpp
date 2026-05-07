@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <cmath>
+#include <time.h>
 #include <omp.h>
 #include <algorithm>
 
@@ -162,11 +163,21 @@ void del(char* s, cpx* a, cpx* b, cpx* c, int* ans) {
     free(s); free(a); free(b); free(c); free(ans);
 }
 
+static void print_metrics(const char* config_name, int transform_size,
+                          double elapsed_seconds) {
+    const double log_terms = log2((double)transform_size);
+    const double flops = 15.0 * transform_size * log_terms + 6.0 * transform_size;
+    const double bytes = 6.0 * transform_size * sizeof(cpx);
+    const double gflops = flops / elapsed_seconds / 1e9;
+    const double ai = flops / bytes;
+    printf("%s,%d,%.6f,%.6f,%.6f\n",
+           config_name, transform_size, elapsed_seconds, gflops, ai);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 int main() {
-    clock_t beg = clock();
     if (!freopen("tests/fft.in", "r", stdin)) {
         fprintf(stderr, "Failed to open input file\n");
         return 1;
@@ -213,12 +224,21 @@ int main() {
     for (int i = 0; i < t; i++) ans[i] = (int)(c[i].real() + 0.5);
     for (int i = 0; i < t - 1; i++) { ans[i+1] += ans[i] / 10; ans[i] %= 10; }
 
+    const int transform_size = t;
+    struct timespec start_time;
+    struct timespec end_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+
     int len = t;
     while (len > 1 && !ans[len-1]) len--;
     for (int i = len - 1; i >= 0; i--) fprintf(out, "%d", ans[i]);
 
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+
     del(s, a, b, c, ans);
-    clock_t end = clock();
-    printf("Time taken: %lf ms\n", (double)(end-beg) / CLOCKS_PER_SEC * 1000.0);
+
+    const double elapsed_seconds = (end_time.tv_sec - start_time.tv_sec)
+        + (end_time.tv_nsec - start_time.tv_nsec) * 1e-9;
+    print_metrics("omp_tiled", transform_size, elapsed_seconds);
     return 0;
 }
