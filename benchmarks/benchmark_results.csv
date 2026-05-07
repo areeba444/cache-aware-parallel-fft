@@ -1,14 +1,92 @@
-Version,Threads,BlockSize,Time_ms
-serial,1,N/A,
-omp,1,N/A,0.145000
-omp,2,N/A,0.209000
-omp,4,N/A,0.972000
-omp,8,N/A,3.516000
-tiled,1,16,0.141000
-tiled,2,16,0.743000
-tiled,4,16,0.270000
-tiled,8,16,5.733000
-avx,1,16,0.173000
-avx,2,16,0.903000
-avx,4,16,0.662000
-avx,8,16,5.991000
+Implementation,Size,Time(s)
+serial,16384,0.109000	0.00
+omp,16384,Time taken: 3.633000 ms
+0.00
+omp_tiled,16384,Time taken: 2.083000 ms
+0.00
+avx,16384,Time taken: 0.406000 ms
+0.00
+serial,32768,0.107000	0.00
+omp,32768,Time taken: 0.255000 ms
+0.00
+omp_tiled,32768,Time taken: 1.048000 ms
+0.00
+avx,32768,Time taken: 0.331000 ms
+0.00
+serial,65536,0.096000	0.00
+omp,65536,Time taken: 0.269000 ms
+0.00
+omp_tiled,65536,Time taken: 3.632000 ms
+0.00
+avx,65536,Time taken: 0.384000 ms
+0.00
+serial,1024,0.407000	0.00
+omp,1024,Time taken: 0.389000 ms
+0.00
+omp_tiled,1024,Time taken: 0.407000 ms
+0.00
+avx,1024,Time taken: 0.731000 ms
+0.00
+serial,2048,0.217000	0.00
+omp,2048,Time taken: 0.620000 ms
+0.00
+omp_tiled,2048,Time taken: 0.350000 ms
+0.00
+avx,2048,Time taken: 2.088000 ms
+0.00
+serial,4096,0.104000	0.00
+omp,4096,Time taken: 0.320000 ms
+0.00
+omp_tiled,4096,Time taken: 0.320000 ms
+0.00
+avx,4096,Time taken: 0.407000 ms
+0.00
+serial,8192,0.262000	0.00
+omp,8192,Time taken: 0.265000 ms
+0.00
+omp_tiled,8192,Time taken: 3.742000 ms
+0.00
+avx,8192,Time taken: 0.378000 ms
+0.00
+serial,16,0.237000	0.00
+omp,16,Time taken: 1.084000 ms
+0.00
+omp_tiled,16,Time taken: 0.343000 ms
+0.00
+avx,16,Time taken: 0.331000 ms
+0.00
+serial,32,0.112000	0.00
+omp,32,Time taken: 0.300000 ms
+0.00
+omp_tiled,32,Time taken: 0.831000 ms
+0.00
+avx,32,Time taken: 0.538000 ms
+0.00
+serial,64,0.138000	0.00
+omp,64,Time taken: 0.345000 ms
+0.00
+omp_tiled,64,Time taken: 0.583000 ms
+0.00
+avx,64,Time taken: 0.393000 ms
+0.00
+serial,128,0.202000	0.00
+omp,128,Time taken: 0.326000 ms
+0.00
+omp_tiled,128,Time taken: 0.303000 ms
+0.00
+avx,128,Time taken: 0.460000 ms
+0.00
+serial,256,0.128000	0.00
+omp,256,Time taken: 0.242000 ms
+0.00
+omp_tiled,256,Time taken: 0.320000 ms
+0.00
+avx,256,Time taken: 0.516000 ms
+0.00
+serial,512,0.202000	0.00
+omp,512,Time taken: 0.461000 ms
+0.00
+omp_tiled,512,Time taken: 0.442000 ms
+0.00
+avx,512,Time taken: 2.416000 ms
+0.00
