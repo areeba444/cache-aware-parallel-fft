@@ -1,0 +1,10 @@
+Comparison of ERT measurements and FFT benchmark results
+
+My laptop: Peak GFLOP/s (ERT) = 977.96 GFLOP/s; DRAM = 7823.67 MB/s (7.64 GB/s)
+My laptop: best FFT kernel observed = 2.04 GFLOP/s
+
+Friend's laptop: Peak GFLOP/s (ERT) = 83.70 GFLOP/s; DRAM = 1339.20 MB/s (1.31 GB/s)
+Friend's laptop: best FFT kernel observed = 4.92 GFLOP/s
+
+My laptop analysis: kernel is memory-bound or limited by data-locality/synchronization (achieved << peak).
+Friend's laptop analysis: kernel is memory-bound or limited by data-locality/synchronization (achieved << peak).

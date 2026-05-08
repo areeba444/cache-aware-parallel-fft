@@ -9,8 +9,8 @@ make all
 echo "Build complete."
 
 # --- Prepare results file ---
-BENCHMARK_DIR="benchmarks"
-RESULTS_FILE="$BENCHMARK_DIR/benchmark_results.csv"
+RESULTS_FILE="${BENCHMARK_RESULTS_FILE:-benchmarks/benchmark_results.csv}"
+BENCHMARK_DIR="$(dirname "$RESULTS_FILE")"
 mkdir -p "$BENCHMARK_DIR"
 echo "config,size,time_s,gflops,AI" > "$RESULTS_FILE"
 

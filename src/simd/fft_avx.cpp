@@ -1,3 +1,7 @@
+// ============================================================================
+// Cache-Aware Parallel FFT Project
+// AVX2 FFT implementation with OpenMP, caching, and SIMD butterfly updates.
+// ============================================================================
 // FFT with OpenMP, Tiled Transpose, and AVX2 SIMD Optimizations
 // ---------------------------------------------------------------
 // BUGS FIXED (all three caused wrong output):
@@ -75,6 +79,18 @@ using namespace std;
 typedef complex<double> cpx;
 
 const int BLOCK_SIZE = 16;
+static int g_fft_min_groups = 0;
+static vector<unsigned int> g_bitrev;
+static int g_bitrev_t = 0;
+
+static int read_env_int(const char* name, int default_value) {
+    const char* v = getenv(name);
+    if (!v || !*v) return default_value;
+    char* end = nullptr;
+    long x = strtol(v, &end, 10);
+    if (end == v || x <= 0) return default_value;
+    return (int)x;
+}
 
 // ---------------------------------------------------------------------------
 // Bit-reversal permutation (parallelised, same as fft_avx original)
@@ -87,15 +103,23 @@ static unsigned int reverse_bits(unsigned int n, unsigned int bits) {
     return r;
 }
 
-static void bit_reversal_permutation(cpx* x, int t) {
+static void build_bitrev_cache(int t) {
+    if (g_bitrev_t == t && !g_bitrev.empty()) return;
     int logt = 0;
     while ((1 << logt) < t) logt++;
+    g_bitrev.assign((size_t)t, 0u);
+    for (int i = 0; i < t; i++) g_bitrev[(size_t)i] = reverse_bits((unsigned int)i, (unsigned int)logt);
+    g_bitrev_t = t;
+}
+
+static void bit_reversal_permutation(cpx* x, int t) {
+    build_bitrev_cache(t);
 
     // Note: parallel swap is safe for bit-reversal because each pair (i,j=rev(i))
     // is disjoint — no two pairs share an index.
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(runtime)
     for (int i = 0; i < t; i++) {
-        unsigned int j = reverse_bits((unsigned int)i, logt);
+        unsigned int j = g_bitrev[(size_t)i];
         if ((int)j > i) swap(x[i], x[j]);
     }
 }
@@ -110,23 +134,26 @@ void FFT_AVX(cpx x[], int f, int t) {
     // Step 2: butterfly stages
     for (int len = 2; len <= t; len <<= 1) {
         int half_len = len >> 1;
+        const int groups = t / len;
 
         // Twiddle root for this stage: e^{i * f * pi / half_len}
         double angle = f * M_PI / half_len;
         cpx w_len(cos(angle), sin(angle));
 
-        // FIX BUG 3: precompute w_len^2 so we can advance by 2 each iteration
-        cpx w_len2 = w_len * w_len;
+        // Stage twiddle cache to reduce loop-carried dependency on w*=w_len
+        vector<cpx> tw(half_len);
+        tw[0] = cpx(1.0, 0.0);
+        for (int k = 1; k < half_len; k++) tw[k] = tw[k - 1] * w_len;
 
-        #pragma omp parallel for schedule(dynamic)
-        for (int i = 0; i < t; i += len) {
-            cpx w(1.0, 0.0);             // twiddle for x[i+j]
-            cpx w1 = w_len;              // twiddle for x[i+j+1]  (FIX BUG 1)
+        if (groups >= g_fft_min_groups) {
+            #pragma omp parallel for schedule(runtime)
+            for (int i = 0; i < t; i += len) {
+                int j = 0;
 
-            int j = 0;
-
-            // --- AVX2 vectorised path: process 2 complex numbers per iteration ---
-            for (; j + 1 < half_len; j += 2) {
+                // --- AVX2 vectorised path: process 2 complex numbers per iteration ---
+                for (; j + 1 < half_len; j += 2) {
+                const cpx& w = tw[j];
+                const cpx& w1 = tw[j + 1];
                 // FIX BUG 1: pack TWO different twiddle factors into the 256-bit reg.
                 // Memory order expected by storeu/loadu: [re0, im0, re1, im1]
                 // _mm256_set_pd fills in REVERSE lane order: arg3,arg2,arg1,arg0
@@ -174,27 +201,60 @@ void FFT_AVX(cpx x[], int f, int t) {
                 _mm256_storeu_pd((double*)&x[i + j],            _mm256_add_pd(p_vec, q_mul_w));
                 _mm256_storeu_pd((double*)&x[i + j + half_len], _mm256_sub_pd(p_vec, q_mul_w));
 
-                // FIX BUG 3: advance twiddle by 2 steps (not 1)
-                w  *= w_len2;
-                w1 *= w_len2;
-            }
+                }
 
-            // --- Scalar tail: handles last element when half_len is odd ---
-            // (In radix-2 FFT half_len is always a power of 2, so this only
-            //  fires when half_len == 1, i.e. len == 2, where j starts at 0
-            //  and the AVX loop requires j+1 < 1 = false → scalar handles it.)
-            for (; j < half_len; j++, w *= w_len) {
-                cpx p = x[i + j];
-                cpx q = w * x[i + j + half_len];
-                x[i + j]            = p + q;
-                x[i + j + half_len] = p - q;
+                // --- Scalar tail: handles last element when half_len is odd ---
+                // (In radix-2 FFT half_len is always a power of 2, so this only
+                //  fires when half_len == 1, i.e. len == 2, where j starts at 0
+                //  and the AVX loop requires j+1 < 1 = false → scalar handles it.)
+                for (; j < half_len; j++) {
+                    const cpx& w = tw[j];
+                    cpx p = x[i + j];
+                    cpx q = w * x[i + j + half_len];
+                    x[i + j]            = p + q;
+                    x[i + j + half_len] = p - q;
+                }
+            }
+        } else {
+            for (int i = 0; i < t; i += len) {
+                int j = 0;
+                for (; j + 1 < half_len; j += 2) {
+                    const cpx& w = tw[j];
+                    const cpx& w1 = tw[j + 1];
+                    __m256d w_vec = _mm256_set_pd(w1.imag(), w1.real(),
+                                                   w.imag(),  w.real());
+                    __m256d p_vec = _mm256_loadu_pd((double*)&x[i + j]);
+                    __m256d q_vec = _mm256_loadu_pd((double*)&x[i + j + half_len]);
+                    __m256d q_re = _mm256_shuffle_pd(q_vec, q_vec, 0b0000);
+                    __m256d q_im = _mm256_shuffle_pd(q_vec, q_vec, 0b1111);
+                    __m256d w_re = _mm256_shuffle_pd(w_vec, w_vec, 0b0000);
+                    __m256d w_im = _mm256_shuffle_pd(w_vec, w_vec, 0b1111);
+                    __m256d res_re = _mm256_sub_pd(_mm256_mul_pd(q_re, w_re),
+                                                   _mm256_mul_pd(q_im, w_im));
+                    __m256d res_im = _mm256_add_pd(_mm256_mul_pd(q_re, w_im),
+                                                   _mm256_mul_pd(q_im, w_re));
+                    __m256d q_mul_w = _mm256_blend_pd(res_re, res_im, 0b1010);
+                    _mm256_storeu_pd((double*)&x[i + j],            _mm256_add_pd(p_vec, q_mul_w));
+                    _mm256_storeu_pd((double*)&x[i + j + half_len], _mm256_sub_pd(p_vec, q_mul_w));
+                }
+                for (; j < half_len; j++) {
+                    const cpx& w = tw[j];
+                    cpx p = x[i + j];
+                    cpx q = w * x[i + j + half_len];
+                    x[i + j]            = p + q;
+                    x[i + j + half_len] = p - q;
+                }
             }
         }
     }
 
     if (f == -1) {
-        #pragma omp parallel for schedule(static)
-        for (int i = 0; i < t; i++) x[i] /= (double)t;
+        if (t >= g_fft_min_groups * 2) {
+            #pragma omp parallel for schedule(runtime)
+            for (int i = 0; i < t; i++) x[i] /= (double)t;
+        } else {
+            for (int i = 0; i < t; i++) x[i] /= (double)t;
+        }
     }
 }
 
@@ -226,7 +286,7 @@ static void print_metrics(const char* config_name, int transform_size,
     const double bytes = 6.0 * transform_size * sizeof(cpx);
     const double gflops = flops / elapsed_seconds / 1e9;
     const double ai = flops / bytes;
-    printf("%s,%d,%.6f,%.6f,%.6f\n",
+    printf("%s,%d,%.9f,%.6f,%.6f\n",
            config_name, transform_size, elapsed_seconds, gflops, ai);
 }
 
@@ -234,6 +294,13 @@ static void print_metrics(const char* config_name, int transform_size,
 // Main
 // ---------------------------------------------------------------------------
 int main() {
+    int fft_chunk = read_env_int("FFT_OMP_CHUNK", 16);
+    const char* sched_env = getenv("FFT_OMP_SCHEDULE");
+    omp_sched_t sched_kind = omp_sched_dynamic;
+    if (sched_env && strcmp(sched_env, "static") == 0) sched_kind = omp_sched_static;
+    omp_set_schedule(sched_kind, fft_chunk);
+    g_fft_min_groups = read_env_int("FFT_MIN_GROUPS", 8 * omp_get_max_threads());
+
     if (!freopen("tests/fft.in", "r", stdin)) {
         fprintf(stderr, "Failed to open input file\n");
         return 1;
@@ -270,6 +337,11 @@ int main() {
     }
     for (int i = 0; i < n; i++) b[i] = s[n-i-1] - '0';
 
+    const int transform_size = t;
+    struct timespec start_time;
+    struct timespec end_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+
     FFT_AVX(a,  1, t);
     FFT_AVX(b,  1, t);
 
@@ -281,16 +353,12 @@ int main() {
     for (int i = 0; i < t; i++)     ans[i] = (int)(c[i].real() + 0.5);
     for (int i = 0; i < t - 1; i++) { ans[i+1] += ans[i] / 10; ans[i] %= 10; }
 
-    const int transform_size = t;
-    struct timespec start_time;
-    struct timespec end_time;
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-
     int len = t;
     while (len > 1 && !ans[len-1]) len--;
-    for (int i = len - 1; i >= 0; i--) fprintf(out, "%d", ans[i]);
 
     clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+    for (int i = len - 1; i >= 0; i--) fprintf(out, "%d", ans[i]);
 
     del(s, a, b, c, ans);
 

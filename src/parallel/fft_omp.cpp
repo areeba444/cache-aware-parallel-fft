@@ -1,5 +1,7 @@
-// FFT with OpenMP parallelism
-// Based on serial_fft.cpp
+// ============================================================================
+// Cache-Aware Parallel FFT Project
+// OpenMP FFT implementation with runtime-controlled parallel butterfly stages.
+// ============================================================================
 #include <complex>
 #include <cstdio>
 #include <cstring>
@@ -16,6 +18,16 @@ double const PI=acos(-1);
 int n,t; char *s;
 cpx *a,*b,*c;
 int *ans,*pos;
+static int g_fft_min_groups = 0;
+
+static int read_env_int(const char* name, int default_value) {
+    const char* v = getenv(name);
+    if (!v || !*v) return default_value;
+    char* end = nullptr;
+    long x = strtol(v, &end, 10);
+    if (end == v || x <= 0) return default_value;
+    return (int)x;
+}
 
 void FFT(cpx x[],int f)
 {
@@ -23,18 +35,40 @@ void FFT(cpx x[],int f)
     for(int i=1;i<t;i<<=1)
     {
         cpx Wn=cpx(cos(PI/i),f*sin(PI/i));
-        #pragma omp parallel for schedule(dynamic)
-        for(int j=0;j<t;j+=i<<1)
-        {
-            cpx w=1;
-            for(int k=0;k<i;k++,w*=Wn)
+        const int full = i << 1;
+        const int groups = t / full;
+
+        if (groups >= g_fft_min_groups) {
+            #pragma omp parallel for schedule(runtime)
+            for(int j=0;j<t;j+=full)
             {
-                cpx p=x[j+k],q=w*x[j+k+i];
-                x[j+k]=p+q,x[j+k+i]=p-q;
+                cpx w=1;
+                for(int k=0;k<i;k++,w*=Wn)
+                {
+                    cpx p=x[j+k],q=w*x[j+k+i];
+                    x[j+k]=p+q,x[j+k+i]=p-q;
+                }
+            }
+        } else {
+            for(int j=0;j<t;j+=full)
+            {
+                cpx w=1;
+                for(int k=0;k<i;k++,w*=Wn)
+                {
+                    cpx p=x[j+k],q=w*x[j+k+i];
+                    x[j+k]=p+q,x[j+k+i]=p-q;
+                }
             }
         }
     }
-    if(f==-1) for(int i=0;i<t;i++) x[i]/=t;
+    if(f==-1) {
+        if (t >= g_fft_min_groups * 2) {
+            #pragma omp parallel for schedule(runtime)
+            for(int i=0;i<t;i++) x[i]/=t;
+        } else {
+            for(int i=0;i<t;i++) x[i]/=t;
+        }
+    }
 }
 
 // void FFT(cpx x[], int f)
@@ -106,12 +140,19 @@ static void print_metrics(const char* config_name, int transform_size,
     const double bytes = 6.0 * transform_size * sizeof(cpx);
     const double gflops = flops / elapsed_seconds / 1e9;
     const double ai = flops / bytes;
-    printf("%s,%d,%.6f,%.6f,%.6f\n",
+    printf("%s,%d,%.9f,%.6f,%.6f\n",
            config_name, transform_size, elapsed_seconds, gflops, ai);
 }
 
 int main()
 {
+    int fft_chunk = read_env_int("FFT_OMP_CHUNK", 16);
+    const char* sched_env = getenv("FFT_OMP_SCHEDULE");
+    omp_sched_t sched_kind = omp_sched_dynamic;
+    if (sched_env && strcmp(sched_env, "static") == 0) sched_kind = omp_sched_static;
+    omp_set_schedule(sched_kind, fft_chunk);
+    g_fft_min_groups = read_env_int("FFT_MIN_GROUPS", 8 * omp_get_max_threads());
+
     if (!freopen("tests/fft.in", "r", stdin)) {
         fprintf(stderr, "Failed to open input file\n");
         return 1;
@@ -159,9 +200,9 @@ int main()
     
     int len = t;
     while(len > 1 && !ans[len-1]) len--;
-    
-    for(int i=len-1;i>=0;i--) fprintf(out,"%d",ans[i]);
     clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+    for(int i=len-1;i>=0;i--) fprintf(out,"%d",ans[i]);
     
     del();
 

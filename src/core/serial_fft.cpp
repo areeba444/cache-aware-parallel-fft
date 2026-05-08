@@ -1,9 +1,7 @@
-//serial fft second version
-//use malloc/calloc instead of global variables
-//thus avoiding the problem of compile memory exceed when n=10^7
-//otherwise option "-mcmodel=large" is needed when compile
-//so memory allocation might take some time
-//original author:  fnoi12bzzhan
+// ============================================================================
+// Cache-Aware Parallel FFT Project
+// Serial radix-2 FFT baseline used for correctness and speedup comparison.
+// ============================================================================
 #include <complex>
 #include <cstdio>
 #include <cstring>
@@ -56,7 +54,7 @@ static void print_metrics(const char* config_name, int transform_size,
     const double bytes = 6.0 * transform_size * sizeof(cpx);
     const double gflops = flops / elapsed_seconds / 1e9;
     const double ai = flops / bytes;
-    printf("%s,%d,%.6f,%.6f,%.6f\n",
+    printf("%s,%d,%.9f,%.6f,%.6f\n",
            config_name, transform_size, elapsed_seconds, gflops, ai);
 }
 
@@ -105,9 +103,10 @@ int main()
     for(int i=0;i<t;i++) ans[i]=(int)(c[i].real()+0.5);
     for(int i=0;i<t;i++) ans[i+1]+=ans[i]/10,ans[i]%=10;
     while(!ans[t]) t--;
-    for(int i=t;i>=0;i--) fprintf(out,"%d",ans[i]);
 
     clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+    for(int i=t;i>=0;i--) fprintf(out,"%d",ans[i]);
     del();
 
     const double elapsed_seconds = (end_time.tv_sec - start_time.tv_sec)

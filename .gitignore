@@ -3,3 +3,8 @@
 bin/
 output/
 *.o
+benchmarks/benchmark_results.csv
+benchmarks/my_laptop/benchmark_results.csv
+benchmarks/my_laptop/benchmark_results_current.csv
+benchmarks/my_laptop/benchmark_results_tuned.csv.venv/
+bin/

@@ -6,6 +6,7 @@ Reads kernel CSV and ERT roof parameters and draws the final roofline chart.
 
 import csv
 import math
+import os
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,11 +17,59 @@ import matplotlib.ticker as ticker
 # ERT ROOF PARAMETERS — customize these from your ERT run results
 # ────────────────────────────────────────────────────────────────────────────
 
-# Example values (replace with your ERT measurements):
+# Example values (will be overridden by ERT measurements if available):
 PEAK_GFLOPS   = 42.5      # Peak floating-point performance (GFLOP/s)
 DRAM_BW_GBs   = 44.0      # DRAM bandwidth (GB/s)
 L2_BW_GBs     = 583.0      # L2 cache bandwidth (GB/s)
 L1_BW_GBs     = 687.0     # L1 cache bandwidth (GB/s)
+
+# Try to load empirical ERT measurements (roofline.json) from a run directory.
+# Environment variable `ERT_ROOFLINE_JSON` may point to a specific file. Otherwise
+# we search common locations for recent ERT runs and use the first `roofline.json`
+# we find. The ERT JSON reports gflops under ['empirical']['gflops'] and
+# gbytes under ['empirical']['gbytes'] (reported in MB/s). We convert gbytes to
+# GB/s by dividing by 1024.
+import json
+
+def try_load_ert_json(path):
+    try:
+        with open(path, 'r') as f:
+            j = json.load(f)
+        gflops = None
+        dram_mb = None
+        try:
+            gflops = float(j['empirical']['gflops']['data'][0][1])
+        except Exception:
+            gflops = None
+        try:
+            dram_mb = float(j['empirical']['gbytes']['data'][0][1])
+        except Exception:
+            dram_mb = None
+        return gflops, dram_mb
+    except Exception:
+        return None, None
+
+ert_json_env = os.getenv('ERT_ROOFLINE_JSON')
+if ert_json_env:
+    gflops_val, dram_mb_val = try_load_ert_json(ert_json_env)
+else:
+    # common candidate locations (search in order: my laptop first, then friend's)
+    candidates = [
+        'roofline/mylaptop/Results/Run.002/roofline.json',
+        'roofline/mylaptop/Results/Run.001/roofline.json',
+        'roofline/Results/Run.001/roofline.json',
+    ]
+    gflops_val, dram_mb_val = (None, None)
+    for c in candidates:
+        gv, dv = try_load_ert_json(c)
+        if gv is not None or dv is not None:
+            gflops_val, dram_mb_val = gv, dv
+            break
+
+if gflops_val is not None:
+    PEAK_GFLOPS = gflops_val
+if dram_mb_val is not None:
+    DRAM_BW_GBs = dram_mb_val / 1024.0
 
 print("Roofline parameters:")
 print(f"  Peak GFLOP/s: {PEAK_GFLOPS}")
@@ -79,8 +128,12 @@ markers = {
 
 legend_added = set()
 
+benchmark_csv = os.getenv('BENCHMARK_RESULTS_CSV', 'benchmarks/benchmark_results.csv')
+roofline_output_dir = os.getenv('ROOFLINE_OUTPUT_DIR', 'roofline/results')
+os.makedirs(roofline_output_dir, exist_ok=True)
+
 try:
-    with open('benchmarks/benchmark_results.csv') as f:
+    with open(benchmark_csv) as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
             print("ERROR: CSV file is empty or malformed.", file=sys.stderr)
@@ -114,7 +167,7 @@ try:
                 continue
 
 except FileNotFoundError:
-    print("ERROR: benchmarks/benchmark_results.csv not found.", file=sys.stderr)
+    print(f"ERROR: {benchmark_csv} not found.", file=sys.stderr)
     print("       Have you run run_benchmarks.sh first?", file=sys.stderr)
     sys.exit(1)
 
@@ -144,8 +197,8 @@ ax.set_ylim(1e-1, 1e3)
 
 plt.tight_layout()
 
-pdf_path = 'roofline/results/roofline_chart.pdf'
-png_path = 'roofline/results/roofline_chart.png'
+pdf_path = os.path.join(roofline_output_dir, 'roofline_chart.pdf')
+png_path = os.path.join(roofline_output_dir, 'roofline_chart.png')
 
 try:
     plt.savefig(pdf_path, dpi=150, bbox_inches='tight')

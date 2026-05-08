@@ -1,3 +1,7 @@
+// ============================================================================
+// Cache-Aware Parallel FFT Project
+// OpenMP FFT with cached bit-reversal, twiddle caching, and k-tiling.
+// ============================================================================
 // FFT with OpenMP and Cache-Blocked Transpose (Gap 2 — data locality)
 // Targets Gap 2: naive inter-stage transpose accesses column-major at stride N,
 // causing O(N²) cache misses. Tiling into B×B blocks fitting L1 (32 KB)
@@ -16,11 +20,25 @@
 #include <time.h>
 #include <omp.h>
 #include <algorithm>
+#include <vector>
 
 using namespace std;
 typedef complex<double> cpx;
 
 const double PI = acos(-1.0);
+static int g_fft_min_groups = 0;
+static int g_fft_tile = 32;
+static vector<int> g_bitrev;
+static int g_bitrev_t = 0;
+
+static int read_env_int(const char* name, int default_value) {
+    const char* v = getenv(name);
+    if (!v || !*v) return default_value;
+    char* end = nullptr;
+    long x = strtol(v, &end, 10);
+    if (end == v || x <= 0) return default_value;
+    return (int)x;
+}
 
 // Tunable block size for cache-blocked transpose.
 // For complex<double> (16 bytes) and a 32 KB L1:
@@ -42,11 +60,20 @@ static int bit_reverse(int v, int bits) {
     return r;
 }
 
-static void bit_reversal_permutation(cpx* x, int t) {
+static void build_bitrev_cache(int t) {
+    if (g_bitrev_t == t && !g_bitrev.empty()) return;
     int logt = 0;
     while ((1 << logt) < t) logt++;
+    g_bitrev.assign(t, 0);
+    for (int i = 0; i < t; i++) g_bitrev[i] = bit_reverse(i, logt);
+    g_bitrev_t = t;
+}
+
+static void bit_reversal_permutation(cpx* x, int t) {
+    build_bitrev_cache(t);
+    #pragma omp parallel for schedule(runtime)
     for (int i = 0; i < t; i++) {
-        int j = bit_reverse(i, logt);
+        int j = g_bitrev[i];
         if (i < j) swap(x[i], x[j]);
     }
 }
@@ -75,7 +102,7 @@ static void transpose_blocked(cpx* buf, int rows, int cols, int B) {
     // For a square matrix (rows == cols) this is a standard B×B tiling.
     // Each B×B tile fits in L1: B*B*sizeof(cpx) = B²*16 bytes.
     // B=16: 4 KB — well within a 32 KB L1.
-    #pragma omp parallel for schedule(dynamic)
+    #pragma omp parallel for schedule(runtime)
     for (int ii = 0; ii < rows; ii += B) {
         for (int jj = ii; jj < cols; jj += B) { // start at ii for in-place
             int imax = min(ii + B, rows);
@@ -103,46 +130,55 @@ void FFT(cpx x[], int f, int t) {
     // butterfly group loop over the index space in B-sized chunks,
     // which keeps the working set of each thread within L1/L2.
     for (int len = 2; len <= t; len <<= 1) {
-        double angle = -f * PI / (len >> 1);
+        const int half = len >> 1;
+        double angle = -f * PI / half;
         cpx Wn(cos(angle), sin(angle));
+        const int groups = t / len;
+
+        // Stage twiddle cache (shared read-only in this stage)
+        vector<cpx> tw(half);
+        tw[0] = cpx(1.0, 0.0);
+        for (int k = 1; k < half; k++) tw[k] = tw[k - 1] * Wn;
 
         // Gap 4: dynamic scheduling rebalances across threads when butterfly
         // groups finish at uneven rates (cache effects at large N).
-        #pragma omp parallel for schedule(dynamic)
-        for (int j = 0; j < t; j += len) {
-            cpx w(1, 0);
-            // Process this butterfly group in BLOCK_SIZE-sized sub-blocks
-            // so the working set (len elements) stays in L1 when len <= B²
-            for (int k = 0; k < (len >> 1); k++, w *= Wn) {
-                cpx p = x[j + k];
-                cpx q = w * x[j + k + (len >> 1)];
-                x[j + k]            = p + q;
-                x[j + k + (len >> 1)] = p - q;
+        if (groups >= g_fft_min_groups) {
+            #pragma omp parallel for schedule(runtime)
+            for (int j = 0; j < t; j += len) {
+                for (int kk = 0; kk < half; kk += g_fft_tile) {
+                    const int kend = min(half, kk + g_fft_tile);
+                    for (int k = kk; k < kend; k++) {
+                        cpx w = tw[k];
+                        cpx p = x[j + k];
+                        cpx q = w * x[j + k + half];
+                        x[j + k]        = p + q;
+                        x[j + k + half] = p - q;
+                    }
+                }
             }
-        }
-
-        // Cache-blocked inter-stage transpose:
-        // When len reaches a size where the array view can be treated as a
-        // square matrix (t == len*len or len == sqrt(t)), perform the blocked
-        // transpose to reorient data for the next pass.
-        // For a 1D radix-2 DIT FFT the "transpose" is implicit in the
-        // bit-reversal; the explicit blocked version is most useful when
-        // len² == t (i.e., at the midpoint of the log₂t stages).
-        int sqt = 1;
-        while (sqt * sqt < t) sqt <<= 1;
-        if (len == sqt && sqt * sqt == t) {
-            // Treat the array as a sqt×sqt matrix and do a blocked in-place
-            // transpose. This is the single inter-stage point where the
-            // access pattern flips from row-major to column-major.
-            // Cost without blocking:  O(t) cache misses (stride-sqt stores)
-            // Cost with B×B blocking: O(t/B) cache misses
-            transpose_blocked(x, sqt, sqt, BLOCK_SIZE);
+        } else {
+            for (int j = 0; j < t; j += len) {
+                for (int kk = 0; kk < half; kk += g_fft_tile) {
+                    const int kend = min(half, kk + g_fft_tile);
+                    for (int k = kk; k < kend; k++) {
+                        cpx w = tw[k];
+                        cpx p = x[j + k];
+                        cpx q = w * x[j + k + half];
+                        x[j + k]        = p + q;
+                        x[j + k + half] = p - q;
+                    }
+                }
+            }
         }
     }
 
     if (f == -1) {
-        #pragma omp parallel for
-        for (int i = 0; i < t; i++) x[i] /= t;
+        if (t >= g_fft_min_groups * 2) {
+            #pragma omp parallel for schedule(runtime)
+            for (int i = 0; i < t; i++) x[i] /= t;
+        } else {
+            for (int i = 0; i < t; i++) x[i] /= t;
+        }
     }
 }
 
@@ -170,7 +206,7 @@ static void print_metrics(const char* config_name, int transform_size,
     const double bytes = 6.0 * transform_size * sizeof(cpx);
     const double gflops = flops / elapsed_seconds / 1e9;
     const double ai = flops / bytes;
-    printf("%s,%d,%.6f,%.6f,%.6f\n",
+    printf("%s,%d,%.9f,%.6f,%.6f\n",
            config_name, transform_size, elapsed_seconds, gflops, ai);
 }
 
@@ -178,6 +214,14 @@ static void print_metrics(const char* config_name, int transform_size,
 // Main
 // ---------------------------------------------------------------------------
 int main() {
+    int fft_chunk = read_env_int("FFT_OMP_CHUNK", 16);
+    const char* sched_env = getenv("FFT_OMP_SCHEDULE");
+    omp_sched_t sched_kind = omp_sched_dynamic;
+    if (sched_env && strcmp(sched_env, "static") == 0) sched_kind = omp_sched_static;
+    omp_set_schedule(sched_kind, fft_chunk);
+    g_fft_min_groups = read_env_int("FFT_MIN_GROUPS", 8 * omp_get_max_threads());
+    g_fft_tile = read_env_int("FFT_TILE", 32);
+
     if (!freopen("tests/fft.in", "r", stdin)) {
         fprintf(stderr, "Failed to open input file\n");
         return 1;
@@ -213,6 +257,11 @@ int main() {
     }
     for (int i = 0; i < n; i++) b[i] = s[n-i-1] - '0';
 
+    const int transform_size = t;
+    struct timespec start_time;
+    struct timespec end_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+
     FFT(a, 1, t);
     FFT(b, 1, t);
 
@@ -224,16 +273,12 @@ int main() {
     for (int i = 0; i < t; i++) ans[i] = (int)(c[i].real() + 0.5);
     for (int i = 0; i < t - 1; i++) { ans[i+1] += ans[i] / 10; ans[i] %= 10; }
 
-    const int transform_size = t;
-    struct timespec start_time;
-    struct timespec end_time;
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-
     int len = t;
     while (len > 1 && !ans[len-1]) len--;
-    for (int i = len - 1; i >= 0; i--) fprintf(out, "%d", ans[i]);
 
     clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+    for (int i = len - 1; i >= 0; i--) fprintf(out, "%d", ans[i]);
 
     del(s, a, b, c, ans);
 

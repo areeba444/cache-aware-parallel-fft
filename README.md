@@ -1,6 +1,6 @@
 # Cache-Aware Parallel FFT for Big Integer Multiplication
 
-A progressive optimization study of the Cooley-Tukey FFT algorithm applied to big integer multiplication via polynomial convolution. Starting from a serial baseline, each version layers in one additional optimization — OpenMP thread parallelism, cache-blocked transpose, and AVX2 SIMD vectorization — so the contribution of each technique can be measured in isolation.
+A progressive optimization study of the Cooley-Tukey FFT algorithm applied to big integer multiplication via polynomial convolution. Starting from a serial baseline, each version layers in one additional optimization — OpenMP thread parallelism, cache-aware tiling, and AVX2 SIMD vectorization — so the contribution of each technique can be measured in isolation.
 
 **Course:** High Performance Computing (University Research Project)  
 **Author:** Areeba Javed  
@@ -13,9 +13,9 @@ A progressive optimization study of the Cooley-Tukey FFT algorithm applied to bi
 | File | Optimization | Gap Addressed |
 |------|-------------|---------------|
 | `serial_fft.cpp` | Baseline Cooley-Tukey FFT, no parallelism | — |
-| `fft_omp.cpp` | OpenMP `schedule(dynamic)` on butterfly outer loop | Thread load imbalance |
-| `fft_omp_tiled.cpp` | OpenMP + B×B cache-blocked inter-stage transpose | Cache-hostile strided access |
-| `fft_avx.cpp` | OpenMP + tiled transpose + AVX2 SIMD butterfly (2 complex doubles/cycle) | Scalar arithmetic throughput |
+| `fft_omp.cpp` | OpenMP parallel butterfly stages with runtime scheduling | Thread load imbalance |
+| `fft_omp_tiled.cpp` | OpenMP + cached bit-reversal + twiddle caching + k-tiling | Cache-unfriendly stage access |
+| `fft_avx.cpp` | OpenMP + cached bit-reversal + twiddle caching + AVX2 SIMD butterfly | Scalar arithmetic throughput |
 
 Each version produces the same output as the serial baseline, verified against a reference answer.
 
@@ -100,39 +100,20 @@ All four outputs should match.
 
 ## Benchmarking
 
-Run all versions across thread counts and collect timings into a CSV:
+Run all versions across the test suite and collect timings into a CSV:
 
 ```bash
-echo "Version,Threads,BlockSize,Time_ms" > benchmark_results.csv
-
-# Serial
-TIME=$(./serial_fft_exec | awk '{print $1}')
-echo "serial,1,N/A,$TIME" >> benchmark_results.csv
-
-# OMP
-for threads in 1 2 4 8; do
-  TIME=$(OMP_NUM_THREADS=$threads ./fft_omp_exec | awk '{print $3}')
-  echo "omp,$threads,N/A,$TIME" >> benchmark_results.csv
-done
-
-# Tiled
-for threads in 1 2 4 8; do
-  TIME=$(OMP_NUM_THREADS=$threads ./fft_omp_tiled_exec | awk '{print $3}')
-  echo "tiled,$threads,16,$TIME" >> benchmark_results.csv
-done
-
-# AVX
-for threads in 1 2 4 8; do
-  TIME=$(OMP_NUM_THREADS=$threads ./fft_avx_exec | awk '{print $3}')
-  echo "avx,$threads,16,$TIME" >> benchmark_results.csv
-done
+bash run_benchmarks.sh
+python3 scripts/analysis.py benchmarks/my_laptop/benchmark_results_fresh.csv
 ```
+
+The benchmark runner uses the inputs in `tests/` and writes a CSV with columns `config,size,time_s,gflops,AI`.
 
 ---
 
 ## Results
 
-Benchmarked on: Ubuntu 22.04 VM, input size N = 8 digits (small correctness test)
+Benchmarked on: Ubuntu 22.04 VM, full input suite in `tests/`
 
 | Version | Threads | Time (ms) |
 |---------|---------|-----------|
@@ -145,7 +126,26 @@ Benchmarked on: Ubuntu 22.04 VM, input size N = 8 digits (small correctness test
 | avx     | 1       | 0.173     |
 | avx     | 4       | 0.662     |
 
-> Note: At small N the OpenMP thread-launch overhead dominates, which is why higher thread counts are slower. The gains from parallelism become significant at N ≥ 2^16.
+> Note: At small N the OpenMP thread-launch overhead dominates, which is why higher thread counts are slower. The gains from parallelism become visible only at larger sizes, and even then the implementation remains memory-bound.
+
+---
+
+## Roofline Characterization
+
+The project uses the Empirical Roofline Tool (ERT) under `roofline/ert/` to measure the machine's peak compute and sustained memory bandwidth.
+
+For the current laptop/VM setup, ERT reported:
+
+- Peak compute: 977.96 GFLOP/s
+- Sustained memory bandwidth: 7.64 GB/s
+
+The FFT kernel has arithmetic intensity of about 2.5 FLOP/byte, so the roofline bound is dominated by memory bandwidth:
+
+$$
+	ext{Max performance} \approx \min(977.96,\ 7.64 \times 2.5) \approx 19\ \text{GFLOP/s}
+$$
+
+That explains why the measured implementations stay far below peak compute: the code is limited by memory movement and synchronization overhead, not by raw floating-point throughput.
 
 ---
 
